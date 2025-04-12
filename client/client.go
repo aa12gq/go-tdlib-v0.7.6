@@ -138,7 +138,14 @@ func (client *Client) GetListener() *Listener {
 	return listener
 }
 
-func (client *Client) Close() error {
+// CloseAndCleanup closes the TDLib instance and cleans up resources
+func (client *Client) CloseAndCleanup() error {
+	// 首先调用 TDLib 的 Close API
+	_, err := client.Close()
+	if err != nil {
+		return err
+	}
+
 	// 关闭 JsonClient
 	if client.jsonClient != nil {
 		client.jsonClient.Close()
