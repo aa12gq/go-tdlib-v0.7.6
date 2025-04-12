@@ -44,6 +44,21 @@ func (store *listenerStore) gc() {
 	}
 }
 
+func (store *listenerStore) clear() {
+	store.Lock()
+	defer store.Unlock()
+
+	// 关闭所有监听器
+	for _, listener := range store.listeners {
+		if listener.IsActive() {
+			listener.Close()
+		}
+	}
+
+	// 清空监听器列表
+	store.listeners = []*Listener{}
+}
+
 type Listener struct {
 	mu       sync.Mutex
 	isActive bool

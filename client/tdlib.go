@@ -149,6 +149,13 @@ func (jsonClient *JsonClient) Execute(req Request) (*Response, error) {
 	return Execute(req)
 }
 
+// Close releases resources associated with the JsonClient
+func (jsonClient *JsonClient) Close() {
+	// TDLib 不需要显式关闭客户端连接
+	// 但可以设置 id 为无效值，以防止后续使用
+	jsonClient.id = -1
+}
+
 type meta struct {
 	Type     string `json:"@type"`
 	Extra    string `json:"@extra"`
@@ -218,4 +225,12 @@ func (jsonInt64 *JsonInt64) UnmarshalJSON(data []byte) error {
 type Type interface {
 	GetType() string
 	GetClass() string
+}
+
+// removeClient removes a client from the tdlib instance
+func (instance *tdlib) removeClient(client *Client) {
+	instance.mu.Lock()
+	defer instance.mu.Unlock()
+
+	delete(instance.clients, client.jsonClient.id)
 }

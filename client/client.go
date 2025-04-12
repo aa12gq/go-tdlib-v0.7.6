@@ -137,3 +137,22 @@ func (client *Client) GetListener() *Listener {
 
 	return listener
 }
+
+func (client *Client) Close() error {
+	// 关闭 JsonClient
+	if client.jsonClient != nil {
+		client.jsonClient.Close()
+	}
+
+	// 从全局实例中移除客户端
+	tdlibInstance.removeClient(client)
+
+	// 清理监听器和捕获器
+	client.listenerStore.clear()
+	client.catchersStore = &sync.Map{}
+
+	// 关闭响应通道
+	close(client.responses)
+
+	return nil
+}
