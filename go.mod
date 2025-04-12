@@ -1,1 +1,1 @@
-module github.com/adhere534/go-tdlib-v0.7.6
+module github.com/aa12gq/go-tdlib-v0.7.6
