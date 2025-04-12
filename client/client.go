@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -140,10 +141,27 @@ func (client *Client) GetListener() *Listener {
 
 // CloseAndCleanup closes the TDLib instance and cleans up resources
 func (client *Client) CloseAndCleanup() error {
-	// 首先调用 TDLib 的 Close API
-	_, err := client.Close()
+	// 调用TDLib的Close指令而不是通过Client.Close()方法
+	result, err := client.Send(Request{
+		meta: meta{
+			Type: "close",
+		},
+		Data: map[string]interface{}{},
+	})
 	if err != nil {
 		return err
+	}
+
+	// 检查结果是否是错误
+	if result.Type == "error" {
+		var errObj struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(result.Data, &errObj); err != nil {
+			return errors.New("failed to decode error response")
+		}
+		return errors.New(errObj.Message)
 	}
 
 	// 关闭 JsonClient
