@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -149,11 +150,22 @@ func (jsonClient *JsonClient) Execute(req Request) (*Response, error) {
 	return Execute(req)
 }
 
-// Close releases resources associated with the JsonClient
+// Close marks this client as closed and releases all associated resources
+// TDLib instances are destroyed automatically after they are closed
 func (jsonClient *JsonClient) Close() {
-	// TDLib 不需要显式关闭客户端连接
-	// 但可以设置 id 为无效值，以防止后续使用
-	jsonClient.id = -1
+	// Only close if the client ID is valid
+	if jsonClient.id >= 0 {
+		// Send a close request to TDLib
+		query := C.CString(`{"@type":"close"}`)
+		defer C.free(unsafe.Pointer(query))
+		C.td_send(C.int(jsonClient.id), query)
+
+		// Force garbage collection to release any C memory that might be held by Go
+		runtime.GC()
+
+		// Mark the client as invalid
+		jsonClient.id = -1
+	}
 }
 
 type meta struct {
@@ -227,10 +239,21 @@ type Type interface {
 	GetClass() string
 }
 
-// removeClient removes a client from the tdlib instance
+// removeClient removes a client from the tdlib instance and performs cleanup
 func (instance *tdlib) removeClient(client *Client) {
 	instance.mu.Lock()
 	defer instance.mu.Unlock()
 
-	delete(instance.clients, client.jsonClient.id)
+	// Remove the client from the map
+	if client != nil && client.jsonClient != nil && client.jsonClient.id >= 0 {
+		delete(instance.clients, client.jsonClient.id)
+		log.Printf("Removed client with ID %d from tdlib instance", client.jsonClient.id)
+	}
+
+	// Check if there are no more clients and potentially clean up resources
+	if len(instance.clients) == 0 {
+		log.Printf("No more clients in tdlib instance")
+		// Force garbage collection to help release memory
+		runtime.GC()
+	}
 }

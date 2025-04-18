@@ -2,8 +2,9 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"log"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -71,36 +72,69 @@ func NewClient(authorizationStateHandler AuthorizationStateHandler, options ...O
 }
 
 func (client *Client) receiver() {
+	defer func() {
+		// Recover from any panics that might occur when sending to closed channels
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic in receiver: %v", r)
+		}
+	}()
+
 	for response := range client.responses {
+		// Handle responses with an Extra field (responses to specific requests)
 		if response.Extra != "" {
 			value, ok := client.catchersStore.Load(response.Extra)
 			if ok {
-				value.(chan *Response) <- response
+				// Use a select with default to avoid blocking if the channel is full
+				select {
+				case value.(chan *Response) <- response:
+					// Successfully sent
+				default:
+					// Channel is full or closed, skip
+					log.Printf("Warning: Could not send response to catcher for extra: %s", response.Extra)
+				}
 			}
 		}
 
+		// Unmarshal the response data
 		typ, err := UnmarshalType(response.Data)
 		if err != nil {
 			continue
 		}
 
+		// Check if this is a closing state update
+		isClosingState := typ.GetType() == TypeUpdateAuthorizationState &&
+			typ.(*UpdateAuthorizationState).AuthorizationState.AuthorizationStateType() == TypeAuthorizationStateClosed
+
+		// Send the update to all active listeners
 		needGc := false
 		for _, listener := range client.listenerStore.Listeners() {
 			if listener.IsActive() {
-				listener.Updates <- typ
+				// Use a select with default to avoid blocking if the channel is full
+				select {
+				case listener.Updates <- typ:
+					// Successfully sent
+				default:
+					// Channel is full or closed, skip
+					log.Printf("Warning: Could not send update to listener")
+				}
 			} else {
 				needGc = true
 			}
 		}
+
+		// Clean up inactive listeners if needed
 		if needGc {
 			client.listenerStore.gc()
 		}
 
-		if typ.GetType() == TypeUpdateAuthorizationState && typ.(*UpdateAuthorizationState).AuthorizationState.AuthorizationStateType() == TypeAuthorizationStateClosed {
-			//close(client.responses)
+		// If we received a closed state, exit the receiver loop
+		if isClosingState {
+			log.Printf("Client %d received closed state, exiting receiver", client.jsonClient.id)
 			return
 		}
 	}
+
+	log.Printf("Receiver for client %d exited", client.jsonClient.id)
 }
 
 func (client *Client) Send(req Request) (*Response, error) {
@@ -139,45 +173,40 @@ func (client *Client) GetListener() *Listener {
 	return listener
 }
 
-// CloseAndCleanup closes the TDLib instance and cleans up resources
+// CloseAndCleanup closes the TDLib instance and cleans up all resources
 func (client *Client) CloseAndCleanup() error {
-	// 调用TDLib的Close指令而不是通过Client.Close()方法
-	result, err := client.Send(Request{
-		meta: meta{
-			Type: "close",
-		},
-		Data: map[string]interface{}{},
-	})
+	// First send the close request to TDLib
+	_, err := client.Close()
 	if err != nil {
-		return err
+		// Even if there's an error, continue with cleanup
+		log.Printf("Error closing TDLib client: %v", err)
 	}
 
-	// 检查结果是否是错误
-	if result.Type == "error" {
-		var errObj struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(result.Data, &errObj); err != nil {
-			return errors.New("failed to decode error response")
-		}
-		return errors.New(errObj.Message)
-	}
+	// Close all listeners first to stop any goroutines that might be using the client
+	client.listenerStore.clear()
 
-	// 关闭 JsonClient
+	// Clear all catchers to prevent memory leaks
+	client.catchersStore.Range(func(key, value interface{}) bool {
+		catcher := value.(chan *Response)
+		close(catcher)
+		client.catchersStore.Delete(key)
+		return true
+	})
+	client.catchersStore = &sync.Map{}
+
+	// Close the responses channel to stop the receiver goroutine
+	close(client.responses)
+
+	// Close the JsonClient to release C resources
 	if client.jsonClient != nil {
 		client.jsonClient.Close()
 	}
 
-	// 从全局实例中移除客户端
+	// Remove the client from the global instance
 	tdlibInstance.removeClient(client)
 
-	// 清理监听器和捕获器
-	client.listenerStore.clear()
-	client.catchersStore = &sync.Map{}
-
-	// 关闭响应通道
-	close(client.responses)
+	// Force garbage collection to help release memory
+	runtime.GC()
 
 	return nil
 }

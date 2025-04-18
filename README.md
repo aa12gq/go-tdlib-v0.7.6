@@ -29,7 +29,7 @@ To run, put the .dll from C:/td/tdlib/bin to the directory with the compiled .ex
 
 ### Client
 
-[Register an application](https://my.telegram.org/apps) to obtain an api_id and api_hash 
+[Register an application](https://my.telegram.org/apps) to obtain an api_id and api_hash
 
 ```go
 package main
@@ -76,7 +76,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("SetLogVerbosityLevel error: %s", err)
 	}
-	
+
     tdlibClient, err := client.NewClient(authorizer)
     if err != nil {
         log.Fatalf("NewClient error: %s", err)
@@ -162,10 +162,12 @@ tdlibClient, err := client.NewClient(authorizer)
 if err != nil {
     log.Fatalf("NewClient error: %s", err)
 }
+// Make sure to properly clean up resources when done
+defer tdlibClient.CloseAndCleanup()
 
 listener := tdlibClient.GetListener()
 defer listener.Close()
- 
+
 for update := range listener.Updates {
     if update.GetClass() == client.ClassUpdate {
         log.Printf("%#v", update)
@@ -200,6 +202,28 @@ docker build --network host --progress plain --tag tdlib-test .
 docker run --rm -it -e "API_ID=00000" -e "API_HASH=abcdef0123456789" tdlib-test ash
 ./app
 ```
+
+### Resource Cleanup
+
+To properly clean up resources and prevent memory leaks, always call `CloseAndCleanup()` when you're done with a client:
+
+```go
+tdlibClient, err := client.NewClient(authorizer)
+if err != nil {
+    log.Fatalf("NewClient error: %s", err)
+}
+// Make sure to properly clean up resources when done
+defer tdlibClient.CloseAndCleanup()
+
+// Use the client...
+```
+
+The `CloseAndCleanup()` method ensures that:
+1. The TDLib instance is properly closed
+2. All goroutines are terminated
+3. All channels are closed
+4. All C resources are freed
+5. Memory is properly released
 
 ## Notes
 

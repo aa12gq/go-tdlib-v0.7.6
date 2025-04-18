@@ -48,14 +48,16 @@ func (store *listenerStore) clear() {
 	store.Lock()
 	defer store.Unlock()
 
-	// 关闭所有监听器
+	// Close all active listeners
 	for _, listener := range store.listeners {
 		if listener.IsActive() {
 			listener.Close()
 		}
 	}
 
-	// 清空监听器列表
+	// Clear the listeners slice to release references
+	store.listeners = nil
+	// Reinitialize with empty slice
 	store.listeners = []*Listener{}
 }
 
